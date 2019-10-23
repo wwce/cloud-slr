@@ -441,12 +441,16 @@ Resources:
     DependsOn:
       - FW2ManagementNetworkInterface
       - FW2UntrustNetworkInterface
-  VPC0TestServer:
+
+  WebServer1:
     Type: AWS::EC2::Instance
     Properties:
       DisableApiTermination: false
       InstanceInitiatedShutdownBehavior: stop
-      ImageId: !Ref 'UbuntuAmiId'
+      ImageId: !FindInMap
+        - UbuntuRegionMap
+        - !Ref 'AWS::Region'
+        - AMI
       InstanceType: t2.micro
       KeyName: !Ref 'KeyName'
       Monitoring: false
@@ -456,17 +460,24 @@ Resources:
             - '-'
             - - !Ref 'AWS::StackName'
               - VPC0TestServer
+      UserData:
+        'Fn::Base64':
+          !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          chkconfig httpd on
+          service httpd start
+          echo "SLR Web Server" > /var/www/html/index.html
       NetworkInterfaces:
         - DeleteOnTermination: true
           Description: Primary network interface
           DeviceIndex: '0'
-          SubnetId: !Ref 'MGMTSubnetAz2'
+          SubnetId: !Ref 'UNTRUSTSubnet2'
           GroupSet:
             - !Ref 'MgmtSecurityGroup'
-      
-    DependsOn:
-      - MGMTSubnetAz2
-      - MgmtSecurityGroup
+
+
 
   MgmtSecurityGroup:
     Type: AWS::EC2::SecurityGroup
