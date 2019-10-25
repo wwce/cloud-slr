@@ -406,7 +406,7 @@ Resources:
       - FW1ManagementNetworkInterface
       - FW1UntrustNetworkInterface
 
-  WebServer1:
+  WebServer2:
     Type: AWS::EC2::Instance
     Properties:
       DisableApiTermination: false
@@ -430,7 +430,10 @@ Resources:
           !Sub |
           #!/bin/bash
           mkdir /usr/mirror &&
-          PARAM_FILE=/usr/monitor/mirror.cfg
+          chmod 755 /usr/mirror
+          PARAM_FILE=/usr/mirror/mirror.cfg
+          touch $PARAM_FILE
+          chmod 755 $PARAM_FILE
           echo tmf=${SLRTrafficMirrorFilter} >> $PARAM_FILE
           echo tmt=${SLRNetworkInterfaceTarget} >> $PARAM_FILE
       NetworkInterfaces:
