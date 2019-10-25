@@ -1,0 +1,487 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates VPC, Subnets, Route Tables, SG, External Application ELB, ASG
+  for PANW firewall and Lambda Infrastructure for the VM-Series firewall
+Parameters:
+  VPC:
+    Description: Name of the newly created VPC
+    Type: AWS::EC2::VPC::Id
+    Default: panwVPC
+  MGMTSubnetAz1CidrBlock:
+    Type: String
+    AllowedPattern: ((\d{1,3})\.){3}\d{1,3}/\d{1,2}
+  UntrustSubnetAz1CidrBlock:
+    Type: String
+    AllowedPattern: ((\d{1,3})\.){3}\d{1,3}/\d{1,2}
+  BootstrapBucket:
+    Type: String
+    Default: eu-cloud-slr
+    Description: Enter the name of the Bootstrap S3 bucket for the VM-Series firewall
+    MinLength: '3'
+    MaxLength: '63'
+  PanFwAmiId:
+    Type: AWS::EC2::Image::Id
+    Description: 'Link to Ami Id lookup table: https://www.paloaltonetworks.com/documentation/global/compatibility-matrix/vm-series-firewalls/aws-cft-amazon-machine-images-ami-list'
+  FWInstanceType:
+    Type: String
+    Default: m5.xlarge
+    AllowedValues:
+      - c5.xlarge
+      - c5.2xlarge
+      - c5.4xlarge
+      - m5.xlarge
+      - m5.2xlarge
+      - m5.4xlarge
+  KeyName:
+    Description: Amazon EC2 Key Pair
+    Type: AWS::EC2::KeyPair::KeyName
+  SSHLocation:
+    Description: Restrict SSH access to the VM-Series firewall (by default can be
+      accessed from anywhere)
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: '0.0.0.0/0'
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid CIDR range of the form x.x.x.x/x.
+  VpcAzs:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Description: Select 2 AZs
+  Debug:
+    Type: String
+    Default: 'No'
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Description: Enable/Disable debug. Default is disabled
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: SLR VPC Subnet Configuration
+        Parameters:
+          - VPC
+          - VpcAzs
+          - MGMTSubnetAz1CidrBlock
+          
+          - UntrustSubnetAz1CidrBlock
+          
+      - Label:
+          default: AMIs
+        Parameters:
+          - PanFwAmiId
+          - UbuntuAmiId
+      - Label:
+          default: Bootstrap 
+        Parameters:
+          - LambdaZipFile
+          - LambdaFunctionsBucketName
+      - Label:
+          default: Direct Attach Bootstrap Configuration
+        Parameters:
+          - FWInstanceType
+    ParameterLabels:
+      PanFwAmiId:
+        default: PANW firewall image ID
+
+Mappings:
+  UbuntuRegionMap:
+    us-west-2:
+      AMI: ami-efd0428f
+    ap-northeast-1:
+      AMI: ami-afb09dc8
+    us-west-1:
+      AMI: ami-2afbde4a
+    ap-northeast-2:
+      AMI: ami-66e33108
+    ap-southeast-1:
+      AMI: ami-8fcc75ec
+    ap-southeast-2:
+      AMI: ami-96666ff5
+    eu-central-1:
+      AMI: ami-060cde69
+    eu-west-1:
+      AMI: ami-03ef731cc103c9f09
+    eu-west-2:
+      AMI: ami-f1d7c395
+    sa-east-1:
+      AMI: ami-4090f22c
+    us-east-1:
+      AMI: ami-80861296
+    us-east-2:
+      AMI: ami-618fab04
+    ca-central-1:
+      AMI: ami-b3d965d7
+    ap-south-1:
+      AMI: ami-c2ee9dad
+Resources:
+  MGMTSubnetAz1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - '0'
+        - !Ref 'VpcAzs'
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref 'VPC'
+      CidrBlock: !Ref 'MGMTSubnetAz1CidrBlock'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - FW-Mgmt-a
+  UNTRUSTSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - '0'
+        - !Ref 'VpcAzs'
+      VpcId: !Ref 'VPC'
+      CidrBlock: !Ref 'UntrustSubnetAz1CidrBlock'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - security-East-West-Pub-a
+    DependsOn: []
+
+  SLRLoadBanlancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref 'SLRLoadBalancerTargetGroup'
+      LoadBalancerArn: !Ref 'SLRLoadBalancer'
+      Port: 4789
+      Protocol: UDP
+  SLRLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: Mirror-Target-NLB
+      SecurityGroups: []
+      Subnets:
+        - !Ref 'UNTRUSTSubnet1'
+
+      Scheme: internal
+      Type: network
+    DependsOn: []
+  SLRLoadBalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckProtocol: TCP
+      HealthCheckPort: '22'
+      Port: 4789
+      Protocol: UDP
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-LB-Target-Group
+      Targets:
+        - Id:
+            Ref: FW1Instance
+          Port: 4789
+
+  SLRNetworkInterfaceTarget:
+    Type: "AWS::EC2::TrafficMirrorTarget"
+    Properties:
+      Description: "Traffic mirror target associated with a network interface"
+      NetworkLoadBalancerArn: !Ref "SLRLoadBalancer"
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Target
+  SLRTrafficMirrorFilter:
+    Type: "AWS::EC2::TrafficMirrorFilter"
+    Properties:
+      Description: "SLR traffic mirror filter"
+      NetworkServices:
+        - "amazon-dns"
+
+  SLRIngressTrafficMirrorFilterRule:
+    Type: "AWS::EC2::TrafficMirrorFilterRule"
+    Properties:
+      Description: "SLR ingress traffic mirror filter rule"
+      TrafficMirrorFilterId: !Ref "SLRTrafficMirrorFilter"
+      TrafficDirection: "ingress"
+      RuleNumber: 10
+      DestinationCidrBlock: "0.0.0.0/0"
+      SourceCidrBlock: "0.0.0.0/0"
+      RuleAction: "accept"
+
+  SLREgressTrafficMirrorFilterRule:
+    Type: "AWS::EC2::TrafficMirrorFilterRule"
+    Properties:
+      Description: "SLR egress traffic mirror filter rule"
+      TrafficMirrorFilterId: !Ref "SLRTrafficMirrorFilter"
+      TrafficDirection: "egress"
+      RuleNumber: 11
+      DestinationCidrBlock: "0.0.0.0/0"
+      SourceCidrBlock: "0.0.0.0/0"
+      RuleAction: "accept"  
+  
+
+  BootstrapRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: BootstrapRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref 'BootstrapBucket'
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref 'BootstrapBucket'
+                    - /*
+  BootstrapInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'BootstrapRole'
+  FW1ManagementNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: AWS FW1 MGMT
+      SubnetId: !Ref 'MGMTSubnetAz1'
+      SourceDestCheck: false
+      GroupSet:
+        - !Ref 'VPCSecurityGroup'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project-FW1-Mgt
+    DependsOn:
+      - VPCSecurityGroup
+  EIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  EIP3:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  associateEIP1:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt 'EIP1.AllocationId'
+      NetworkInterfaceId: !Ref 'FW1UntrustNetworkInterface'
+  associateEIP3:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt 'EIP3.AllocationId'
+      NetworkInterfaceId: !Ref 'FW1ManagementNetworkInterface'
+  FW1UntrustNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: AWS FW1 E1/1
+      SubnetId: !Ref 'UNTRUSTSubnet1'
+      SourceDestCheck: false
+      GroupSet:
+        - !Ref 'VPCSecurityGroup'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project-FW1-Untrust
+    DependsOn:
+      - VPCSecurityGroup
+  FW1Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      DisableApiTermination: false
+      IamInstanceProfile: !Ref 'BootstrapInstanceProfile'
+      InstanceInitiatedShutdownBehavior: stop
+      EbsOptimized: true
+      ImageId: !Ref 'PanFwAmiId'
+      InstanceType: !Ref 'FWInstanceType'
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: true
+            VolumeSize: 60
+      KeyName: !Ref 'KeyName'
+      Monitoring: false
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project-FW1
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref 'FW1UntrustNetworkInterface'
+          DeviceIndex: '1'
+        - NetworkInterfaceId: !Ref 'FW1ManagementNetworkInterface'
+          DeviceIndex: '0'
+      
+      UserData: !Base64
+        Fn::Join:
+          - ''
+          - - vmseries-bootstrap-aws-s3bucket=
+            - !Ref 'BootstrapBucket'
+    DependsOn:
+      - FW1ManagementNetworkInterface
+      - FW1UntrustNetworkInterface
+
+  WebServer1:
+    Type: AWS::EC2::Instance
+    Properties:
+      DisableApiTermination: false
+      InstanceInitiatedShutdownBehavior: stop
+      ImageId: !FindInMap
+        - UbuntuRegionMap
+        - !Ref 'AWS::Region'
+        - AMI
+      InstanceType: t3.small
+      KeyName: !Ref 'KeyName'
+      Monitoring: false
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project-WebServer
+      UserData:
+        'Fn::Base64':
+          !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          chkconfig httpd on
+          service httpd start
+          echo "SLR Web Server" > /var/www/html/index.html
+      NetworkInterfaces:
+        - DeleteOnTermination: true
+          Description: Primary network interface
+          DeviceIndex: '0'
+          SubnetId: !Ref 'UNTRUSTSubnet1'
+          GroupSet:
+            - !Ref 'MgmtSecurityGroup'
+  MgmtSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH to MGMT interface
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project-Mgt-SG
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref 'SSHLocation'
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: !Ref 'SSHLocation'
+        - IpProtocol: '-1'
+          FromPort: -1
+          ToPort: -1
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '0.0.0.0/0'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+  UntrustSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Untrust interface
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project-Untrust-SG
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+  TrustSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for trust interface
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+  VPCSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for within VPC
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Project-VPC-SG
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+Outputs:
+  KeyName:
+    Value: !Ref 'KeyName'
+    Description: Key Pair you have selected for SSH
+  SSHLocation:
+    Value: !Ref 'SSHLocation'
+    Description: Make sure you SSH from this IP address
