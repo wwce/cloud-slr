@@ -128,7 +128,7 @@ Resources:
           Value: !Join
             - '-'
             - - !Ref 'AWS::StackName'
-              - FW-Mgmt-a
+              - Cloud-SLR-Fw-Mgmt-a
   UNTRUSTSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -142,7 +142,7 @@ Resources:
           Value: !Join
             - '-'
             - - !Ref 'AWS::StackName'
-              - security-East-West-Pub-a
+              - Cloud-SLR-Fw-Untrust-a
     DependsOn: []
 
   SLRLoadBanlancerListener:
@@ -194,13 +194,19 @@ Resources:
           Value: !Join
             - '-'
             - - !Ref 'AWS::StackName'
-              - SLR-Target
+              - SLR-Mirror-Target
   SLRTrafficMirrorFilter:
     Type: "AWS::EC2::TrafficMirrorFilter"
     Properties:
       Description: "SLR traffic mirror filter"
       NetworkServices:
         - "amazon-dns"
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - SLR-Filter
 
   SLRIngressTrafficMirrorFilterRule:
     Type: "AWS::EC2::TrafficMirrorFilterRule"
@@ -223,7 +229,59 @@ Resources:
       DestinationCidrBlock: "0.0.0.0/0"
       SourceCidrBlock: "0.0.0.0/0"
       RuleAction: "accept"  
-  
+
+  CreateMirrorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CreateMirrorRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTrafficMirrorFilter
+                  - ec2:DeleteTrafficMirrorFilter
+                  - ec2:CreateTrafficMirrorTarget
+                  - ec2:DeleteTrafficMirrorTarget
+                  - ec2:CreateTrafficMirrorFilterRule
+                  - ec2:DeleteTrafficMirrorFilterRule
+                  - ec2:DeleteTrafficMirrorSession
+                  - ec2:CreateTrafficMirrorSession
+                Resource:
+                  - arn:aws:ec2:*:*:traffic-mirror-target/*
+                  - arn:aws:ec2:*:*:traffic-mirror-filter/*
+                  - arn:aws:ec2:*:*:traffic-mirror-session/*
+                  - arn:aws:ec2:*:*:traffic-mirror-filter-rule/*
+                  - arn:aws:ec2:*:*:network-interface/*
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeImages
+                  - ec2:DescribeInstances
+                  - ec2:DescribeTrafficMirrorFilters
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeTrafficMirrorTargets
+                  - ec2:DescribeInstanceAttribute
+                  - ec2:DescribeNetworkInterfaceAttribute
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeNetworkInterfacePermissions
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeTrafficMirrorSessions
+                Resource: '*'
+  CreateMirrorRoleProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'CreateMirrorRole'
 
   BootstrapRole:
     Type: AWS::IAM::Role
@@ -352,6 +410,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       DisableApiTermination: false
+      IamInstanceProfile: !Ref 'CreateMirrorRoleProfile'
       InstanceInitiatedShutdownBehavior: stop
       ImageId: !FindInMap
         - UbuntuRegionMap
@@ -370,18 +429,17 @@ Resources:
         'Fn::Base64':
           !Sub |
           #!/bin/bash
-          yum update -y
-          yum install -y httpd
-          chkconfig httpd on
-          service httpd start
-          echo "SLR Web Server" > /var/www/html/index.html
+          mkdir /usr/mirror &&
+          PARAM_FILE=/usr/monitor/mirror.cfg
+          echo tmf=${SLRTrafficMirrorFilter} >> $PARAM_FILE
+          echo tmt=${SLRNetworkInterfaceTarget} >> $PARAM_FILE
       NetworkInterfaces:
-        - DeleteOnTermination: true
+        - AssociatePublicIpAddress: "true"
           Description: Primary network interface
-          DeviceIndex: '0'
+          DeviceIndex: "0"
           SubnetId: !Ref 'UNTRUSTSubnet1'
           GroupSet:
-            - !Ref 'MgmtSecurityGroup'
+            - !Ref "MgmtSecurityGroup"
   MgmtSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
