@@ -62,16 +62,14 @@ Metadata:
           - VPC
           - VpcAzs
           - MGMTSubnetAz1CidrBlock
-          
           - UntrustSubnetAz1CidrBlock
-          
       - Label:
           default: AMIs
         Parameters:
           - PanFwAmiId
           - UbuntuAmiId
       - Label:
-          default: Bootstrap 
+          default: Bootstrap
         Parameters:
           - LambdaZipFile
           - LambdaFunctionsBucketName
@@ -82,7 +80,6 @@ Metadata:
     ParameterLabels:
       PanFwAmiId:
         default: PANW firewall image ID
-
 Mappings:
   UbuntuRegionMap:
     us-west-2:
@@ -144,7 +141,6 @@ Resources:
             - - !Ref 'AWS::StackName'
               - Cloud-SLR-Fw-Untrust-a
     DependsOn: []
-
   SLRLoadBanlancerListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -161,7 +157,6 @@ Resources:
       SecurityGroups: []
       Subnets:
         - !Ref 'UNTRUSTSubnet1'
-
       Scheme: internal
       Type: network
     DependsOn: []
@@ -180,15 +175,13 @@ Resources:
             - - !Ref 'AWS::StackName'
               - SLR-LB-Target-Group
       Targets:
-        - Id:
-            Ref: FW1Instance
+        - Id: !Ref 'FW2Instance'
           Port: 4789
-
   SLRNetworkInterfaceTarget:
-    Type: "AWS::EC2::TrafficMirrorTarget"
+    Type: AWS::EC2::TrafficMirrorTarget
     Properties:
-      Description: "Traffic mirror target associated with a network interface"
-      NetworkLoadBalancerArn: !Ref "SLRLoadBalancer"
+      Description: Traffic mirror target associated with a network interface
+      NetworkLoadBalancerArn: !Ref 'SLRLoadBalancer'
       Tags:
         - Key: Name
           Value: !Join
@@ -196,40 +189,37 @@ Resources:
             - - !Ref 'AWS::StackName'
               - SLR-Mirror-Target
   SLRTrafficMirrorFilter:
-    Type: "AWS::EC2::TrafficMirrorFilter"
+    Type: AWS::EC2::TrafficMirrorFilter
     Properties:
-      Description: "SLR traffic mirror filter"
+      Description: SLR traffic mirror filter
       NetworkServices:
-        - "amazon-dns"
+        - amazon-dns
       Tags:
         - Key: Name
           Value: !Join
             - '-'
             - - !Ref 'AWS::StackName'
               - SLR-Filter
-
   SLRIngressTrafficMirrorFilterRule:
-    Type: "AWS::EC2::TrafficMirrorFilterRule"
+    Type: AWS::EC2::TrafficMirrorFilterRule
     Properties:
-      Description: "SLR ingress traffic mirror filter rule"
-      TrafficMirrorFilterId: !Ref "SLRTrafficMirrorFilter"
-      TrafficDirection: "ingress"
+      Description: SLR ingress traffic mirror filter rule
+      TrafficMirrorFilterId: !Ref 'SLRTrafficMirrorFilter'
+      TrafficDirection: ingress
       RuleNumber: 10
-      DestinationCidrBlock: "0.0.0.0/0"
-      SourceCidrBlock: "0.0.0.0/0"
-      RuleAction: "accept"
-
+      DestinationCidrBlock: '0.0.0.0/0'
+      SourceCidrBlock: '0.0.0.0/0'
+      RuleAction: accept
   SLREgressTrafficMirrorFilterRule:
-    Type: "AWS::EC2::TrafficMirrorFilterRule"
+    Type: AWS::EC2::TrafficMirrorFilterRule
     Properties:
-      Description: "SLR egress traffic mirror filter rule"
-      TrafficMirrorFilterId: !Ref "SLRTrafficMirrorFilter"
-      TrafficDirection: "egress"
+      Description: SLR egress traffic mirror filter rule
+      TrafficMirrorFilterId: !Ref 'SLRTrafficMirrorFilter'
+      TrafficDirection: egress
       RuleNumber: 11
-      DestinationCidrBlock: "0.0.0.0/0"
-      SourceCidrBlock: "0.0.0.0/0"
-      RuleAction: "accept"  
-
+      DestinationCidrBlock: '0.0.0.0/0'
+      SourceCidrBlock: '0.0.0.0/0'
+      RuleAction: accept
   CreateMirrorRole:
     Type: AWS::IAM::Role
     Properties:
@@ -282,7 +272,153 @@ Resources:
       Path: /
       Roles:
         - !Ref 'CreateMirrorRole'
+  CheckFWUp:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: check_fw_up.lambda_handler
+      Role: !GetAtt 'LambdaExecutionRole.Arn'
+      Layers:
+        - !Ref 'ASLambdalayer'
+      Environment:
+        Variables:
+          StackName: !Ref 'AWS::StackName'
+          Region: !Ref 'AWS::Region'
+      Code:
+        S3Bucket: !Ref 'BootstrapBucket'
+        S3Key: lambda.zip
+      Runtime: python3.6
+      Timeout: 600
+    DependsOn:
+      - LambdaExecutionRole
+  MyStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: SetupSLRFW
+      DefinitionString: !Sub
+        - |-
+          {
+            "Comment": "Configure Firewalls",
+            "StartAt": "check_fw_up",
+            "States": {
+              "check_fw_up": {
+                "Type": "Task",
+                "Resource": "${checkfwupArn}",
+                "Next": "install_tp"
+              },
+              "install_tp": {
+                "Type": "Task",
+                "Resource": "${installtpArn}",
+                "Next": "install_av"
+              },
+              "install_av": {
+                "Type": "Task",
+                "Resource": "${installavArn}",
+                "Next": "update_fw"
+              },
+              "update_fw": {
+                "Type": "Task",
+                "Resource": "${updatefwArn}",
+                "End": true
+              }
+            }
+          }
 
+        - {
+          checkfwupArn: !GetAtt 'CheckFWUp.Arn',
+          installtpArn: !GetAtt 'InstallTP.Arn',
+          installavArn: !GetAtt 'InstallAV.Arn',
+          updatefwArn: !GetAtt 'UpdateFW.Arn'
+        }
+      RoleArn: !GetAtt 'StateMachineExecutionRole.Arn'
+  StateMachineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - '-'
+        - - StateMachineExecutionRole
+          - !Ref 'AWS::StackName'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Join
+                - .
+                - - states
+                  - !Ref 'AWS::Region'
+                  - amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+  StateMachineExecutionPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Join
+        - '-'
+        - - StateMachineExecutionPolicy
+          - !Ref 'AWS::StackName'
+      Roles:
+        - !Ref 'StateMachineExecutionRole'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource: '*'
+  InstallAV:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: install_av.lambda_handler
+      Role: !GetAtt 'LambdaExecutionRole.Arn'
+      Layers:
+        - !Ref 'ASLambdalayer'
+      Environment:
+        Variables:
+          StackName: !Ref 'AWS::StackName'
+          Region: !Ref 'AWS::Region'
+      Code:
+        S3Bucket: !Ref 'BootstrapBucket'
+        S3Key: lambda.zip
+      Runtime: python3.6
+      Timeout: 300
+    DependsOn:
+      - LambdaExecutionRole
+  UpdateFW:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: update_fw.lambda_handler
+      Role: !GetAtt 'LambdaExecutionRole.Arn'
+      Layers:
+        - !Ref 'ASLambdalayer'
+      Environment:
+        Variables:
+          StackName: !Ref 'AWS::StackName'
+          Region: !Ref 'AWS::Region'
+      Code:
+        S3Bucket: !Ref 'BootstrapBucket'
+        S3Key: lambda.zip
+      Runtime: python3.6
+      Timeout: 300
+    DependsOn:
+      - LambdaExecutionRole
+  InstallTP:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: install_tp.lambda_handler
+      Role: !GetAtt 'LambdaExecutionRole.Arn'
+      Layers:
+        - !Ref 'ASLambdalayer'
+      Environment:
+        Variables:
+          StackName: !Ref 'AWS::StackName'
+          Region: !Ref 'AWS::Region'
+      Code:
+        S3Bucket: !Ref 'BootstrapBucket'
+        S3Key: lambda.zip
+      Runtime: python3.6
+      Timeout: 300
+    DependsOn:
+      - LambdaExecutionRole
   BootstrapRole:
     Type: AWS::IAM::Role
     Properties:
@@ -318,10 +454,207 @@ Resources:
       Path: /
       Roles:
         - !Ref 'BootstrapRole'
-  FW1ManagementNetworkInterface:
+  ASLambdalayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - python3.6
+        - python3.7
+      Content:
+        S3Bucket: !Ref 'BootstrapBucket'
+        S3Key: layer.zip
+      Description: Autoscale Layer
+      LayerName: as-layer
+      LicenseInfo: MIT
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - '-'
+        - - TransitLambdaExecutionRole
+          - !Ref 'AWS::StackName'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+  LambdaExecutionPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Join
+        - '-'
+        - - TransitLambdaExecutionPolicy
+          - !Ref 'AWS::StackName'
+      Roles:
+        - !Ref 'LambdaExecutionRole'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - autoscaling:*
+            Resource:
+              - '*'
+          - Sid: STSAccumRole
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Resource:
+              - '*'
+          - Sid: InvokeLambda
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+              - lambda:ListLayerVersions
+              - lambda:ListLayers
+              - lambda:DeleteFunction
+              - lambda:CreateFunction
+            Resource:
+              - '*'
+          - Action:
+              - iam:UpdateAssumeRolePolicy
+              - iam:GetRole
+              - iam:PassRole
+            Resource:
+              - '*'
+            Effect: Allow
+            Sid: IAMActions
+          - Action:
+              - cloudformation:*
+            Resource:
+              - '*'
+            Effect: Allow
+            Sid: CloudFormationActions
+          - Action:
+              - ec2:*
+            Resource:
+              - '*'
+            Effect: Allow
+            Sid: EC2FullAccess
+          - Sid: StateMachineActions
+            Effect: Allow
+            Action:
+              - states:ListExecutions
+              - states:StartExecution
+            Resource:
+              - '*'
+          - Sid: DynamoDbActions
+            Effect: Allow
+            Action:
+              - dynamodb:CreateTable
+              - dynamodb:DeleteItem
+              - dynamodb:DescribeTable
+              - dynamodb:GetItem
+              - dynamodb:GetRecords
+              - dynamodb:ListTables
+              - dynamodb:PutItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:TagResource
+              - dynamodb:UpdateItem
+              - dynamodb:UpdateTable
+            Resource:
+              - '*'
+          - Sid: Logs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:PutMetricFilter
+            Resource:
+              - '*'
+          - Sid: S3Actions
+            Effect: Allow
+            Action:
+              - s3:GetBucketAcl
+              - s3:GetBucketLocation
+              - s3:GetObject
+              - s3:GetObjectAcl
+              - s3:ListBucket
+              - s3:PutObject
+              - s3:PutObjectAcl
+              - s3:PutObjectTagging
+              - s3:DeleteBucket
+              - s3:DeleteBucketPolicy
+              - s3:DeleteObject
+            Resource:
+              - '*'
+          - Effect: Allow
+            Action:
+              - cloudformation:DescribeStacks
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutDestination
+              - logs:PutDestinationPolicy
+              - logs:PutLogEvents
+              - logs:PutMetricFilter
+            Resource:
+              - '*'
+          - Effect: Allow
+            Action:
+              - cloudwatch:*
+            Resource:
+              - '*'
+          - Effect: Allow
+            Action:
+              - ec2:AllocateAddress
+              - ec2:AssociateAddress
+              - ec2:AssociateRouteTable
+              - ec2:AttachInternetGateway
+              - ec2:AttachNetworkInterface
+              - ec2:CreateNetworkInterface
+              - ec2:CreateTags
+              - ec2:CreateRoute
+              - ec2:CreateVpcEndpoint
+              - ec2:DeleteNetworkInterface
+              - ec2:DeleteRouteTable
+              - ec2:DeleteRoute
+              - ec2:DeleteSecurityGroup
+              - ec2:DeleteTags
+              - ec2:DeleteVpcEndpoints
+              - ec2:DescribeAddresses
+              - ec2:DescribeAvailabilityZones
+              - ec2:DescribeVpcEndpointServices
+              - ec2:DescribeInstanceAttribute
+              - ec2:DescribeInstanceStatus
+              - ec2:DescribeInstances
+              - ec2:DescribeImages
+              - ec2:DescribeNatGateways
+              - ec2:DescribeNetworkInterfaceAttribute
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeTags
+              - ec2:DescribeVpcEndpoints
+              - ec2:DescribeVpcs
+              - ec2:DescribeSubnets
+              - ec2:DescribeSecurityGroups
+              - ec2:DetachInternetGateway
+              - ec2:DetachNetworkInterface
+              - ec2:DetachVolume
+              - ec2:DisassociateAddress
+              - ec2:DisassociateRouteTable
+              - ec2:ModifyNetworkInterfaceAttribute
+              - ec2:ModifySubnetAttribute
+              - ec2:MonitorInstances
+              - ec2:RebootInstances
+              - ec2:ReleaseAddress
+              - ec2:ReportInstanceStatus
+              - ec2:TerminateInstances
+              - ec2:DescribeIdFormat
+            Resource:
+              - '*'
+  FW2ManagementNetworkInterface:
     Type: AWS::EC2::NetworkInterface
     Properties:
-      Description: AWS FW1 MGMT
+      Description: AWS FW2 MGMT
       SubnetId: !Ref 'MGMTSubnetAz1'
       SourceDestCheck: false
       GroupSet:
@@ -331,7 +664,7 @@ Resources:
           Value: !Join
             - '-'
             - - !Ref 'AWS::StackName'
-              - SLR-Project-FW1-Mgt
+              - SLR-Project-FW2-Mgt
     DependsOn:
       - VPCSecurityGroup
   EIP1:
@@ -346,16 +679,16 @@ Resources:
     Type: AWS::EC2::EIPAssociation
     Properties:
       AllocationId: !GetAtt 'EIP1.AllocationId'
-      NetworkInterfaceId: !Ref 'FW1UntrustNetworkInterface'
+      NetworkInterfaceId: !Ref 'FW2UntrustNetworkInterface'
   associateEIP3:
     Type: AWS::EC2::EIPAssociation
     Properties:
       AllocationId: !GetAtt 'EIP3.AllocationId'
-      NetworkInterfaceId: !Ref 'FW1ManagementNetworkInterface'
-  FW1UntrustNetworkInterface:
+      NetworkInterfaceId: !Ref 'FW2ManagementNetworkInterface'
+  FW2UntrustNetworkInterface:
     Type: AWS::EC2::NetworkInterface
     Properties:
-      Description: AWS FW1 E1/1
+      Description: AWS FW2 E1/1
       SubnetId: !Ref 'UNTRUSTSubnet1'
       SourceDestCheck: false
       GroupSet:
@@ -365,10 +698,10 @@ Resources:
           Value: !Join
             - '-'
             - - !Ref 'AWS::StackName'
-              - SLR-Project-FW1-Untrust
+              - SLR-Project-FW2-Untrust
     DependsOn:
       - VPCSecurityGroup
-  FW1Instance:
+  FW2Instance:
     Type: AWS::EC2::Instance
     Properties:
       DisableApiTermination: false
@@ -390,22 +723,20 @@ Resources:
           Value: !Join
             - '-'
             - - !Ref 'AWS::StackName'
-              - SLR-Project-FW1
+              - SLR-Project-FW2
       NetworkInterfaces:
-        - NetworkInterfaceId: !Ref 'FW1UntrustNetworkInterface'
+        - NetworkInterfaceId: !Ref 'FW2UntrustNetworkInterface'
           DeviceIndex: '1'
-        - NetworkInterfaceId: !Ref 'FW1ManagementNetworkInterface'
+        - NetworkInterfaceId: !Ref 'FW2ManagementNetworkInterface'
           DeviceIndex: '0'
-      
       UserData: !Base64
         Fn::Join:
           - ''
           - - vmseries-bootstrap-aws-s3bucket=
             - !Ref 'BootstrapBucket'
     DependsOn:
-      - FW1ManagementNetworkInterface
-      - FW1UntrustNetworkInterface
-
+      - FW2ManagementNetworkInterface
+      - FW2UntrustNetworkInterface
   WebServer2:
     Type: AWS::EC2::Instance
     Properties:
@@ -425,24 +756,17 @@ Resources:
             - '-'
             - - !Ref 'AWS::StackName'
               - SLR-Project-WebServer
-      UserData:
-        'Fn::Base64':
-          !Sub |
-          #!/bin/bash
-          mkdir /usr/mirror &&
-          chmod 755 /usr/mirror
-          PARAM_FILE=/usr/mirror/mirror.cfg
-          touch $PARAM_FILE
-          chmod 755 $PARAM_FILE
-          echo tmf=${SLRTrafficMirrorFilter} >> $PARAM_FILE
-          echo tmt=${SLRNetworkInterfaceTarget} >> $PARAM_FILE
+      UserData: !Base64
+        Fn::Sub: "#!/bin/bash\nmkdir /usr/mirror &&\nchmod 755 /usr/mirror\nPARAM_FILE=/usr/mirror/mirror.cfg\n\
+          touch $PARAM_FILE\nchmod 755 $PARAM_FILE\necho tmf=${SLRTrafficMirrorFilter}\
+          \ >> $PARAM_FILE\necho tmt=${SLRNetworkInterfaceTarget} >> $PARAM_FILE\n"
       NetworkInterfaces:
-        - AssociatePublicIpAddress: "true"
+        - AssociatePublicIpAddress: 'true'
           Description: Primary network interface
-          DeviceIndex: "0"
+          DeviceIndex: '0'
           SubnetId: !Ref 'UNTRUSTSubnet1'
           GroupSet:
-            - !Ref "MgmtSecurityGroup"
+            - !Ref 'MgmtSecurityGroup'
   MgmtSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -546,3 +870,6 @@ Outputs:
   SSHLocation:
     Value: !Ref 'SSHLocation'
     Description: Make sure you SSH from this IP address
+  FWMgtIP:
+    Value: !Ref 'EIP3'
+    Description: Fw Management Interface
