@@ -355,7 +355,13 @@
                 "install_tp": {
                   "Type": "Task",
                   "Resource": "${installtpArn}",
-                  "Next": "install_av"
+                  "Next": "install_av",
+                  "Retry": [ {
+                        "ErrorEquals": ["States.Timeout"],
+                        "IntervalSeconds": 10,
+                        "MaxAttempts": 2,
+                        "BackoffRate": 2.0
+                     } ]
                 },
                 "install_av": {
                   "Type": "Task",

@@ -342,7 +342,42 @@
           <service/>
           <service-group/>
           <schedule/>
-          <rulebase/>
+          <rulebase>
+            <security>
+              <rules>
+                <entry name="log-all" uuid="1b5a8b4e-40b7-4eeb-9c62-ebcc1cdc3e61">
+                  <to>
+                    <member>any</member>
+                  </to>
+                  <from>
+                    <member>any</member>
+                  </from>
+                  <source>
+                    <member>any</member>
+                  </source>
+                  <destination>
+                    <member>any</member>
+                  </destination>
+                  <source-user>
+                    <member>any</member>
+                  </source-user>
+                  <category>
+                    <member>any</member>
+                  </category>
+                  <application>
+                    <member>any</member>
+                  </application>
+                  <service>
+                    <member>any</member>
+                  </service>
+                  <hip-profiles>
+                    <member>any</member>
+                  </hip-profiles>
+                  <action>allow</action>
+                </entry>
+              </rules>
+            </security>
+          </rulebase>
           <import>
             <network>
               <interface>
@@ -350,6 +385,144 @@
               </interface>
             </network>
           </import>
+          <profiles>
+            <virus>
+              <entry name="av-alert-all">
+                <decoder>
+                  <entry name="ftp">
+                    <action>alert</action>
+                    <wildfire-action>alert</wildfire-action>
+                  </entry>
+                  <entry name="http">
+                    <action>alert</action>
+                    <wildfire-action>alert</wildfire-action>
+                  </entry>
+                  <entry name="http2">
+                    <action>alert</action>
+                    <wildfire-action>alert</wildfire-action>
+                  </entry>
+                  <entry name="imap">
+                    <action>alert</action>
+                    <wildfire-action>alert</wildfire-action>
+                  </entry>
+                  <entry name="pop3">
+                    <action>alert</action>
+                    <wildfire-action>alert</wildfire-action>
+                  </entry>
+                  <entry name="smb">
+                    <action>alert</action>
+                    <wildfire-action>alert</wildfire-action>
+                  </entry>
+                  <entry name="smtp">
+                    <action>alert</action>
+                    <wildfire-action>alert</wildfire-action>
+                  </entry>
+                </decoder>
+              </entry>
+            </virus>
+            <spyware>
+              <entry name="spyware-alert-all">
+                <botnet-domains>
+                  <lists>
+                    <entry name="default-paloalto-dns">
+                      <packet-capture>disable</packet-capture>
+                      <action>
+                        <sinkhole/>
+                      </action>
+                    </entry>
+                    <entry name="default-paloalto-cloud">
+                      <packet-capture>disable</packet-capture>
+                      <action>
+                        <allow/>
+                      </action>
+                    </entry>
+                  </lists>
+                  <sinkhole>
+                    <ipv4-address>pan-sinkhole-default-ip</ipv4-address>
+                    <ipv6-address>::1</ipv6-address>
+                  </sinkhole>
+                </botnet-domains>
+                <rules>
+                  <entry name="alert-all">
+                    <action>
+                      <alert/>
+                    </action>
+                    <severity>
+                      <member>critical</member>
+                      <member>high</member>
+                      <member>medium</member>
+                      <member>low</member>
+                    </severity>
+                    <threat-name>any</threat-name>
+                    <category>any</category>
+                    <packet-capture>disable</packet-capture>
+                  </entry>
+                </rules>
+              </entry>
+            </spyware>
+            <vulnerability>
+              <entry name="vuln-alert-all">
+                <rules>
+                  <entry name="alert-all">
+                    <action>
+                      <alert/>
+                    </action>
+                    <vendor-id>
+                      <member>any</member>
+                    </vendor-id>
+                    <severity>
+                      <member>critical</member>
+                      <member>high</member>
+                      <member>medium</member>
+                      <member>low</member>
+                    </severity>
+                    <cve>
+                      <member>any</member>
+                    </cve>
+                    <threat-name>any</threat-name>
+                    <host>any</host>
+                    <category>any</category>
+                    <packet-capture>disable</packet-capture>
+                  </entry>
+                </rules>
+              </entry>
+            </vulnerability>
+            <file-blocking>
+              <entry name="file-block-alert">
+                <rules>
+                  <entry name="any">
+                    <application>
+                      <member>any</member>
+                    </application>
+                    <file-type>
+                      <member>any</member>
+                    </file-type>
+                    <direction>both</direction>
+                    <action>alert</action>
+                  </entry>
+                </rules>
+              </entry>
+            </file-blocking>
+          </profiles>
+          <profile-group>
+            <entry name="slr-log-all">
+              <wildfire-analysis>
+                <member>default</member>
+              </wildfire-analysis>
+              <virus>
+                <member>av-alert-all</member>
+              </virus>
+              <spyware>
+                <member>spyware-alert-all</member>
+              </spyware>
+              <vulnerability>
+                <member>vuln-alert-all</member>
+              </vulnerability>
+              <file-blocking>
+                <member>file-block-alert</member>
+              </file-blocking>
+            </entry>
+          </profile-group>
         </entry>
       </vsys>
     </entry>
