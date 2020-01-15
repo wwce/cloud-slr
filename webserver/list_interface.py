@@ -84,7 +84,7 @@ create_table(conn)
 
 
 #print(subnet_list)
-filters = [{'Name':'subnet-id', 'Values':subnet_list}]
+filters = [{'Name':'subnet-id', 'Values':subnet_list} ]
 output = client.describe_network_interfaces(Filters=filters)
 #print(output)
 

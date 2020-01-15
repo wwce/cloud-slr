@@ -2,7 +2,7 @@
 <head>
 <link rel="stylesheet" type="text/css" href="style.css">
 </head>
-<h2>List of AWS VPC</h2>
+<h1>List of AWS VPC</h1>
 
 <form name="refresh" action="welcome.php" method="POST">
 <input type="submit" name="Main" value="Main"/>

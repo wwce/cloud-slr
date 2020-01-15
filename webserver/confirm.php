@@ -12,22 +12,27 @@
 <?php
     if (isset($_POST['submit']))
     {
-	foreach($_POST['vpc_list'] as $selected){
-           $vpc_list = $vpc_list.",". $selected;
+	if (isset($_POST['vpc_list']))
+	{
+            foreach($_POST['vpc_list'] as $selected){
+                $value_list = $vpc_list.",". $selected;
+            }
         }
-
-        //echo "test";
-        $command = escapeshellcmd("sudo python3 /var/www/html/interface_vpc.py \"$vpc_list\"");
-        $output = shell_exec($command);
-    }
-    if (isset($_POST['confirm']))
-    {
-	foreach($_POST['vpc_list'] as $selected){
-           $vpc_list = $vpc_list.",". $selected;
+	if (isset($_POST['subnet_list']))
+	{
+            foreach($_POST['subnet_list'] as $selected){
+                $value_list = $subnet_list.",". $selected;
+            }
         }
-
+	if (isset($_POST['interface_list']))
+	{
+            foreach($_POST['interface_list'] as $selected){
+                $value_list = $interface_list.",". $selected;
+            }
+        }
         //echo "test";
-        $command = escapeshellcmd("sudo python3 /var/www/html/add_tag.py \"$vpc_list\"");
+        $command = escapeshellcmd("sudo python3 /var/www/html/interface_vpc.py \"$value_list\"");
+	echo $command;
         $output = shell_exec($command);
     }
     $connection = new SQLite3('/var/www/html/test.db');

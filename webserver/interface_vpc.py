@@ -97,9 +97,10 @@ for interface in output['NetworkInterfaces']:
         for tag in interface['TagSet']:
             if tag['Key'] == 'Name':
                 interface_desc = tag['Value']
-                print(interface_desc)
-    if 'InstanceId' in interface['Attachment'].keys():
-        instance_id = interface['Attachment']['InstanceId']
+                #print(interface_desc)
+    if 'Attachment' in interface.keys():
+        if 'InstanceId' in interface['Attachment'].keys():
+            instance_id = interface['Attachment']['InstanceId']
     insert_entry(conn, interface_id, interface_desc, instance_id)
 
 
